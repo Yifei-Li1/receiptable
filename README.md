@@ -1,88 +1,97 @@
 # Receiptable
 
-A mobile app that photographs receipts, reads them with Claude's vision model, stores
-what you spent on the device, and builds weekly and monthly spending reports.
+A mobile app that photographs receipts, reads them **on the phone**, stores what you spent
+locally, and builds weekly and monthly spending reports.
+
+No server, no API key and no cost per scan: text recognition uses the phone's built-in engine
+(Google ML Kit on Android, Apple Vision on iOS) through [`expo-ocr-kit`](https://www.npmjs.com/package/expo-ocr-kit).
+Photos and data never leave the device.
 
 ```
-┌──────────────── phone (Expo / React Native) ────────────────┐        ┌──────── server/ (Node) ────────┐
-│ camera / photo library → resize to ≤1568px JPEG ──────────────── POST /api/extract ──→ Claude (vision,  │
-│                                                              │        │   structured JSON output)      │
-│ review & edit ← merchant, date, total, tax, tip, category, items ←────┘                                │
-│ SQLite (receipts, settings) → weekly / monthly reports, CSV export                                     │
-└──────────────────────────────────────────────────────────────┘
+camera / photo library
+  → resize (≤2048px)
+  → on-device OCR: text pieces + their positions on the photo
+  → receipt parser (src/lib/receiptParser.ts)
+      rebuild printed rows from positions → find total, date, store, currency, tax, tip, items, category
+  → review & edit screen → SQLite
+  → weekly / monthly reports, CSV export
 ```
-
-The API key lives on the server, not in the app, so it never ships inside the app bundle.
 
 ## Features
 
-- **Scan**: take a photo or pick one from the library. The server returns merchant, date,
-  currency, total, tax, tip, a category and line items. You review and fix anything before saving.
-- **Manual entry** if you have no photo, or if reading the receipt fails.
-- **Storage**: receipts and their images stay on the device (SQLite and the app's document folder).
-  Amounts are stored as integer cents.
-- **Reports**: pick weekly or monthly, then step back through earlier periods. Each report shows:
-  - the total and the average per day
-  - the % change from the previous period
-  - a per-day bar chart
-  - a breakdown by category
-  - the top merchants
-  - the receipts in that period
-  
-  Receipts in other currencies are listed separately and never added into the main total.
-- **Settings**: server URL and an optional access token, your main currency, and whether weeks
-  start on Monday or Sunday. You can also export all receipts as CSV.
+- **Scan**: take a photo or pick one. The app fills in store, date, currency, total, tax, tip,
+  category and line items, and points out anything it couldn't read so you can check it.
+- **Manual entry** when there's no photo or the scan misses something.
+- **Storage**: SQLite and the app's document folder, on the device only. Amounts are stored as integer cents.
+- **Reports**: weekly or monthly, stepping back through earlier periods. Each shows the total,
+  average per day, % change from the previous period, a per-day chart, a category breakdown,
+  top stores and the receipts in that period. Other currencies are listed separately, not added in.
+- **Settings**: main currency, week start (Monday/Sunday), CSV export.
+
+## How the receipt parser works
+
+OCR returns pieces of text with boxes (x, y, width, height). On Android, ML Kit often returns a
+whole column as one multi-line block, so the parser first splits blocks into lines and estimates
+each line's position. It then groups text printed at the same height into rows, which pairs labels
+with their amounts (e.g. `TOTAL` … `12.40`) even when the columns were read separately.
+
+- **Total**: the amount on a row labelled grand total / total / amount due (also Summe, importe,
+  合计, 总计…). Subtotal, cash tendered and change are skipped. If there's no label, it uses
+  subtotal + tax, and if that's missing too, the largest price (marked as a best guess).
+- **Date**: ISO, `MM/DD/YYYY` or `DD/MM/YYYY` (ambiguous ones follow the phone's locale),
+  `Nov 5, 2026`, `26 Nov 2026`, `2026年11月26日`. Future dates are rejected.
+- **Store**: the biggest text among the first few rows that isn't an address, phone number or greeting.
+- **Category**: keyword rules on the store name first, then on the whole receipt.
+- **Items**: rows with a name and a price above the subtotal/total line, with `2 x` quantities.
+
+The tests in `src/lib/receiptParser.test.ts` use simulated OCR output for iOS and Android.
+When a real receipt is read wrongly, the fix is usually a new keyword or regex there, plus a test.
+
+Known limits: currencies without cents (JPY, KRW) aren't handled; handwritten or faded receipts
+read poorly; line items are best-effort.
 
 ## Running it
 
-### 1. Server
-
-```bash
-cd server
-npm install
-export ANTHROPIC_API_KEY=sk-ant-...       # your Anthropic API key
-export RECEIPTABLE_TOKEN=some-long-secret # optional: the app must send this token
-npm run dev                              # listens on :8787
-```
-
-### 2. App
+The OCR module is native code, so **Expo Go won't work**. You need a development build of the app,
+made once (and again whenever native packages change):
 
 ```bash
 cd app
 npm install
-npx expo start
 ```
 
-The app uses native modules (camera, SQLite, image manipulation). Expo Go already includes all of
-these, so you can scan the QR code with Expo Go to try it. For a standalone app, make a development
-build with `npx expo run:android` / `npx expo run:ios`, or with `npx eas-cli@latest build`.
+Then either build in the cloud with EAS (no Android Studio or Xcode needed):
 
-In the app, open **Settings** and set the server URL. With the server on your computer and the
-phone on the same Wi-Fi, that's `http://<your-computer-LAN-IP>:8787`. Tap **Test connection** to check it.
-You can also preset the URL with `EXPO_PUBLIC_SERVER_URL=http://... npx expo start`.
+```bash
+npx eas-cli@latest build --profile development --platform android   # or ios
+```
+
+Or build locally (needs Android Studio, or Xcode on a Mac):
+
+```bash
+npx expo run:android   # or: npx expo run:ios
+```
+
+Install that build on your phone, then start the dev server and open the app:
+
+```bash
+npx expo start
+```
 
 ## Development
 
 ```bash
-cd app && npm run typecheck && npm test   # report and amount-parsing unit tests
-cd server && npm run typecheck
+cd app
+npm run typecheck
+npm test        # receipt parser + report tests
+npm run lint
 ```
 
 ## Project layout
 
 ```
 app/src/app/            screens (Expo Router): tabs (Spending, Reports, Settings), scan modal, receipt/[id]
-app/src/lib/            db.ts (SQLite + migrations), reports.ts (period math + aggregation),
-                        api.ts (server client), images.ts, money.ts, dates.ts, settings.ts
+app/src/lib/            receiptParser.ts (OCR → receipt fields), scan.ts (OCR + parser),
+                        db.ts (SQLite + migrations), reports.ts, images.ts, money.ts, dates.ts, settings.ts
 app/src/components/     form, bar chart, list row, UI primitives
-server/src/extract.ts   Claude call: image → zod-validated receipt JSON
-server/src/index.ts     Express API (/health, /api/extract)
 ```
-
-## Notes / next steps
-
-- Each scan makes one Claude call (Opus 5.5 at low effort). If a request is refused, the server
-  falls back to another model automatically.
-- Before a public release, deploy the server somewhere with HTTPS and require `RECEIPTABLE_TOKEN`
-  or real user auth.
-- Ideas: budgets with alerts, recurring-expense detection, cloud backup/sync, charts across several months.

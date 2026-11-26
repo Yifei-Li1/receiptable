@@ -6,14 +6,14 @@ import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, Scroll
 import { ReceiptForm } from "../components/ReceiptForm";
 import { colors } from "../components/theme";
 import { Button } from "../components/ui";
-import { ExtractError, extractReceipt } from "../lib/api";
 import { toISODate } from "../lib/dates";
 import { insertReceipt } from "../lib/db";
-import { persistImage, prepareForUpload } from "../lib/images";
+import { persistImage, prepareImage } from "../lib/images";
+import { scanReceipt } from "../lib/scan";
 import { loadSettings } from "../lib/settings";
 import type { NewReceipt } from "../lib/types";
 
-type Stage = { kind: "pick" } | { kind: "analyzing"; uri: string } | { kind: "review"; draft: NewReceipt; error?: string };
+type Stage = { kind: "pick" } | { kind: "analyzing"; uri: string } | { kind: "review"; draft: NewReceipt; error?: string; warning?: string };
 
 export default function ScanScreen() {
   const db = useSQLiteContext();
@@ -48,20 +48,34 @@ export default function ScanScreen() {
     const asset = result.assets[0];
 
     setStage({ kind: "analyzing", uri: asset.uri });
-    let prepared: { uri: string; base64: string };
+    let imageUri: string;
     try {
-      prepared = await prepareForUpload(asset.uri, asset.width, asset.height);
+      imageUri = await prepareImage(asset.uri, asset.width, asset.height);
     } catch {
       setStage({ kind: "review", draft: await blank(asset.uri), error: "Couldn't process that image." });
       return;
     }
     try {
-      const settings = await loadSettings(db);
-      const extracted = await extractReceipt(settings, prepared.base64);
-      setStage({ kind: "review", draft: { ...extracted, imageUri: prepared.uri, note: "" } });
-    } catch (e) {
-      const msg = e instanceof ExtractError ? e.message : "Something went wrong reading the receipt.";
-      setStage({ kind: "review", draft: await blank(prepared.uri), error: `${msg} You can fill it in manually.` });
+      const { draft, missing, noText } = await scanReceipt(imageUri, await loadSettings(db));
+      if (noText) {
+        setStage({
+          kind: "review",
+          draft,
+          error: "No text found. Try a sharper, well-lit photo, or fill it in manually.",
+        });
+      } else {
+        setStage({
+          kind: "review",
+          draft,
+          warning: missing.length ? `Couldn't read: ${missing.join(", ")}. Please check or fill these in.` : undefined,
+        });
+      }
+    } catch {
+      setStage({
+        kind: "review",
+        draft: await blank(imageUri),
+        error: "Text recognition isn't available on this device. You can fill it in manually.",
+      });
     }
   };
 
@@ -82,7 +96,7 @@ export default function ScanScreen() {
     return (
       <View style={styles.center}>
         <Text style={styles.title}>Add a receipt</Text>
-        <Text style={styles.hint}>Take a clear, flat photo with the total visible. We'll read the amount, date, store and items.</Text>
+        <Text style={styles.hint}>Take a clear, flat photo with the total visible. It’s read on your phone — nothing is uploaded.</Text>
         <View style={styles.actions}>
           <Button title="Take photo" onPress={() => pick("camera")} />
           <Button title="Choose from library" variant="secondary" onPress={() => pick("library")} />
@@ -105,7 +119,11 @@ export default function ScanScreen() {
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 }} keyboardShouldPersistTaps="handled">
-        {stage.error ? <Text style={styles.error}>{stage.error}</Text> : (
+        {stage.error ? (
+          <Text style={styles.error}>{stage.error}</Text>
+        ) : stage.warning ? (
+          <Text style={styles.warn}>{stage.warning}</Text>
+        ) : (
           <Text style={styles.ok}>Check the details below, then save.</Text>
         )}
         <ReceiptForm initial={stage.draft} submitLabel="Save receipt" onSubmit={save} saving={saving} />
@@ -121,5 +139,6 @@ const styles = StyleSheet.create({
   actions: { alignSelf: "stretch", gap: 12, marginTop: 32 },
   preview: { width: "100%", height: 320, borderRadius: 12 },
   error: { color: colors.danger, backgroundColor: "#FEE2E2", padding: 12, borderRadius: 10, marginBottom: 16 },
+  warn: { color: "#92400E", backgroundColor: "#FEF3C7", padding: 12, borderRadius: 10, marginBottom: 16 },
   ok: { color: colors.primary, backgroundColor: colors.primarySoft, padding: 12, borderRadius: 10, marginBottom: 16 },
 });

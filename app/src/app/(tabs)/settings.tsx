@@ -13,7 +13,6 @@ import { DEFAULT_SETTINGS, loadSettings, saveSettings, type Settings } from "../
 export default function SettingsScreen() {
   const db = useSQLiteContext();
   const [s, setS] = useState<Settings>(DEFAULT_SETTINGS);
-  const [testing, setTesting] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -26,18 +25,6 @@ export default function SettingsScreen() {
     await saveSettings(db, s);
     setS(await loadSettings(db));
     Alert.alert("Saved");
-  };
-
-  const testServer = async () => {
-    setTesting(true);
-    try {
-      const res = await fetch(`${s.serverUrl.replace(/\/+$/, "")}/health`);
-      Alert.alert(res.ok ? "Server is reachable ✓" : `Server responded ${res.status}`);
-    } catch {
-      Alert.alert("Could not reach the server", "Check the URL and that your phone is on the same network.");
-    } finally {
-      setTesting(false);
-    }
   };
 
   const exportCsv = async () => {
@@ -57,28 +44,6 @@ export default function SettingsScreen() {
   return (
     <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
       <Card>
-        <SectionTitle>Receipt reader server</SectionTitle>
-        <Field
-          label="Server URL"
-          value={s.serverUrl}
-          onChangeText={(serverUrl) => setS({ ...s, serverUrl })}
-          placeholder="http://192.168.1.20:8787"
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-        />
-        <Field
-          label="Access token (optional)"
-          value={s.serverToken}
-          onChangeText={(serverToken) => setS({ ...s, serverToken })}
-          autoCapitalize="none"
-          autoCorrect={false}
-          secureTextEntry
-        />
-        <Button title="Test connection" variant="secondary" onPress={testServer} loading={testing} disabled={!s.serverUrl} />
-      </Card>
-
-      <Card style={styles.gap}>
         <SectionTitle>Reports</SectionTitle>
         <Field
           label="Main currency"
@@ -104,7 +69,7 @@ export default function SettingsScreen() {
 
       <Card style={styles.gap}>
         <SectionTitle>Data</SectionTitle>
-        <Text style={styles.label}>Receipts are stored only on this device.</Text>
+        <Text style={styles.label}>Receipts are read and stored only on this device.</Text>
         <Button title="Export all receipts (CSV)" variant="secondary" onPress={exportCsv} />
       </Card>
     </ScrollView>
