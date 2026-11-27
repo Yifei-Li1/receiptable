@@ -18,7 +18,10 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.receiptable.app"
+      "package": "com.receiptable.app",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -35,6 +38,16 @@
         }
       ]
     ],
-    "scheme": "receiptable"
+    "scheme": "receiptable",
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "2aa3e3e1-d09e-44ef-a2d9-9525eb07af9c"
+      }
+    }
   }
 }
