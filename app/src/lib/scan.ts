@@ -1,6 +1,6 @@
-import { recognizeText } from "expo-ocr-kit";
+import { recognizeText, type OcrResult } from "expo-ocr-kit";
 import { toISODate } from "./dates";
-import { parseReceipt } from "./receiptParser";
+import { blocksToLines, groupRows, parseReceipt } from "./receiptParser";
 import type { Settings } from "./settings";
 import type { NewReceipt } from "./types";
 
@@ -10,6 +10,8 @@ export interface ScanResult {
   missing: string[];
   /** True when OCR found no text at all. */
   noText: boolean;
+  /** Raw OCR output and the rows the parser rebuilt from it, for the debug view. */
+  debug: { ocr: OcrResult; rows: { y: number; text: string }[] };
 }
 
 /** Whether this device's locale writes the day before the month (e.g. 26/11 vs 11/26). */
@@ -25,6 +27,9 @@ export async function scanReceipt(imageUri: string, settings: Settings): Promise
   const ocr = await recognizeText(imageUri);
   const parsed = parseReceipt(ocr.blocks, { defaultCurrency: settings.currency, dayFirst: localeIsDayFirst() });
 
+  const rows = groupRows(blocksToLines(ocr.blocks)).map((r) => ({ y: Math.round(r.y), text: r.text }));
+  if (__DEV__) console.log("[OCR]", JSON.stringify(ocr, null, 2), "\n[ROWS]", JSON.stringify(rows, null, 2));
+
   const missing: string[] = [];
   if (parsed.totalCents == null) missing.push("total");
   else if (!parsed.totalFromLabel) missing.push("total (best guess)");
@@ -33,6 +38,7 @@ export async function scanReceipt(imageUri: string, settings: Settings): Promise
 
   return {
     noText: ocr.blocks.length === 0,
+    debug: { ocr, rows },
     missing,
     draft: {
       merchant: parsed.merchant,

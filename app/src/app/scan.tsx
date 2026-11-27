@@ -9,11 +9,12 @@ import { Button } from "../components/ui";
 import { toISODate } from "../lib/dates";
 import { insertReceipt } from "../lib/db";
 import { persistImage, prepareImage } from "../lib/images";
-import { scanReceipt } from "../lib/scan";
+import { scanReceipt, type ScanResult } from "../lib/scan";
+import { OcrDebug } from "../components/OcrDebug";
 import { loadSettings } from "../lib/settings";
 import type { NewReceipt } from "../lib/types";
 
-type Stage = { kind: "pick" } | { kind: "analyzing"; uri: string } | { kind: "review"; draft: NewReceipt; error?: string; warning?: string };
+type Stage = { kind: "pick" } | { kind: "analyzing"; uri: string } | { kind: "review"; draft: NewReceipt; error?: string; warning?: string; debug?: ScanResult["debug"] };
 
 export default function ScanScreen() {
   const db = useSQLiteContext();
@@ -56,17 +57,19 @@ export default function ScanScreen() {
       return;
     }
     try {
-      const { draft, missing, noText } = await scanReceipt(imageUri, await loadSettings(db));
+      const { draft, missing, noText, debug } = await scanReceipt(imageUri, await loadSettings(db));
       if (noText) {
         setStage({
           kind: "review",
           draft,
+          debug,
           error: "No text found. Try a sharper, well-lit photo, or fill it in manually.",
         });
       } else {
         setStage({
           kind: "review",
           draft,
+          debug,
           warning: missing.length ? `Couldn't read: ${missing.join(", ")}. Please check or fill these in.` : undefined,
         });
       }
@@ -126,6 +129,7 @@ export default function ScanScreen() {
         ) : (
           <Text style={styles.ok}>Check the details below, then save.</Text>
         )}
+        {stage.debug ? <OcrDebug debug={stage.debug} /> : null}
         <ReceiptForm initial={stage.draft} submitLabel="Save receipt" onSubmit={save} saving={saving} />
       </ScrollView>
     </KeyboardAvoidingView>
